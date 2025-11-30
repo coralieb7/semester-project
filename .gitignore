@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Data
+data/input/*
+!data/input/.gitkeep
+data/output/*
+!data/output/.gitkeep
+data/training_data/*
+!data/training_data/.gitkeep
+data/guidelines/*
+
+# Models
+models/lora_weights/*
+!models/lora_weights/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

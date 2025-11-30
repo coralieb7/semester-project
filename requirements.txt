@@ -1,0 +1,40 @@
+# Core Dependencies
+#torch>=2.0.0
+#torchvision>=0.15.0 # Install separately with: pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+diffusers>=0.25.0
+transformers>=4.38.0
+accelerate>=0.25.0
+peft>=0.8.0
+
+# Vision Language Model (Qwen2.5-VL)
+qwen-vl-utils>=0.0.8
+
+# RAG System
+#sentence-transformers>=2.3.0
+#chromadb>=0.4.0
+
+# Document Processing
+pypdf2>=3.0.0
+python-docx>=1.0.0
+
+# Image/Video Processing
+pillow>=10.0.0
+opencv-python>=4.8.0
+imageio>=2.31.0
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.65.0
+datasets>=2.14.0
+matplotlib
+
+# Optional but recommended
+bitsandbytes>=0.41.0
+#xformers>=0.0.20 # -> dependencies problem with python and cuda 
+# flash-attn>=2.3.0  # Install separately with: pip install flash-attn --no-build-isolation
+
+# Development
+pytest>=7.4.0
+jupyter>=1.0.0
+black>=23.0.0
+
