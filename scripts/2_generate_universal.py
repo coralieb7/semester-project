@@ -1,5 +1,13 @@
 """
-FILE: scripts/2_generate_images.py
+FILE: scripts/2_generate_universal.py
+Generate images using Universal Evolution System + SDXL
+
+This script uses the UniversalVisualEvolution class which works for ANY visual type:
+- Neurons, particles, networks
+- Abstract art, paintings
+- Minimalist graphics, logos
+- Geometric patterns, vectors
+- Literally anything!
 """
 
 import sys
@@ -8,34 +16,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import argparse
 from PIL import Image
-from src.vlm.prompt_generator import PromptGenerator
+from src.vlm.universal_evolution_generator import UniversalEvolutionGenerator
 from src.sdxl.generator import SDXLGenerator
 from src.sdxl.interpolator import FrameInterpolator
-from src.sdxl.latent_slerp_interpolator import LatentSlerpInterpolator
 from src.sdxl.mapper import SignalMapper
 from config.model_config import ModelConfig
 from config.paths import Paths
 import json
-import os
-import gc
-import torch
+import os, gc, torch
 from datetime import datetime
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate images using VLM + SDXL"
+        description="Generate images using Universal Evolution + SDXL"
     )
-    
+
     # Input options
     parser.add_argument('--initial-image', type=str, required=True,
                        help='Path to initial/target image')
-    parser.add_argument('--evolution', type=str, required=True,
-                       help='Evolution description (e.g., "dot becomes a neuron")')
-    parser.add_argument('--prompts-type', type=str, default='basic', 
-                        choices=['basic', 'few_shot', 'matrix', 'only'],
-                        help='Type of the evolution prompt.')
-    
+    parser.add_argument('--evolution-template', type=str,
+                       default='grow_and_complexify',
+                       help='Evolution template (grow_and_complexify, simplify_and_shrink, densify, expand, intensify, fade)')
+
     # Generation parameters
     parser.add_argument('--num-prompts', type=int, default=13,
                        help='Number of evolutionary prompts (max sequence length)')
@@ -45,12 +48,9 @@ def main():
                         help='Whether to interpolate between keyframes')
     parser.add_argument('--interpolations', type=int, default=None,
                        help='Interpolations between keyframes')
-    parser.add_argument('--interpolator', type=str, default='linear',
-                       choices=['linear', 'cosine', 'latent_slerp'],
-                       help='Interpolation method (linear, cosine, latent_slerp)')
-    parser.add_argument('--analysis-type', type=str, default='detailed',
-                        help='Type of the analysis for the initial image (detailed, brief, technical)')
-    
+    parser.add_argument('--style-prefix', type=str, default="",
+                        help='Style prefix for LoRA activation (e.g., "TRGR, style")')
+
     # SDXL parameters
     parser.add_argument('--strength', type=float, default=0.45,
                        help='SDXL strength (0.0-1.0)')
@@ -64,7 +64,7 @@ def main():
                        help='Image height')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
-    
+
     # Options
     parser.add_argument('--use-txt2img', action='store_true',
                        help='Start with txt2img instead of initial image')
@@ -72,106 +72,106 @@ def main():
                        help='Prompt for txt2img (if --use-txt2img)')
     parser.add_argument('--lora', type=str, default=None,
                        help='Path to LoRA weights')
-    parser.add_argument('--use-rag', action='store_true',
-                       help='Use RAG for guideline enhancement')
-    
+
     # Output
     parser.add_argument('--output', type=str, default=None,
                        help='Output directory name')
     parser.add_argument('--save-prompts-only', action='store_true',
                        help='Only generate and save prompts, no image generation')
-    
+    parser.add_argument('--list-templates', action='store_true',
+                       help='List available evolution templates and exit')
+
     args = parser.parse_args()
-    
+
+    # List templates if requested
+    if args.list_templates:
+        UniversalEvolutionGenerator.list_templates()
+        return
+
     print("="*70)
-    print("Image Generation Pipeline")
+    print("Universal Evolution Image Generation Pipeline")
     print("="*70)
-    
+
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = os.path.splitext(os.path.basename(args.initial_image))[0]
-    output_name = args.output or f"generation_{filename}_{timestamp}"
+    output_name = args.output or f"generation_universal_{filename}_{timestamp}"
     output_dir = Paths.OUTPUT_DIR / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     frames_dir = output_dir / "frames"
     frames_dir.mkdir(exist_ok=True)
-    
+
     print(f"\nOutput directory: {output_dir}")
-    
-    # Step 1: Generate evolutionary prompts with VLM
+
+    # Step 1: Generate evolutionary prompts with Universal Evolution
     print("\n" + "="*70)
-    print("STEP 1: Generating evolutionary prompts with VLM")
+    print("STEP 1: Generating universal evolution sequence")
     print("="*70)
-    
-    vlm = PromptGenerator(
+
+    # Initialize VLM
+    # vlm = ImageAnalyzer(
+    #     model_id=ModelConfig.VLM_MODEL_ID,
+    #     device=ModelConfig.VLM_DEVICE
+    # )
+
+    # Initialize Universal Evolution
+    vlm = UniversalEvolutionGenerator(
         model_id=ModelConfig.VLM_MODEL_ID,
         device=ModelConfig.VLM_DEVICE
     )
-    
-    # Get visual guidelines if using RAG
-    visual_guidelines = None
-    if args.use_rag:
-        try:
-            from src.rag.guideline_rag import VisualGuidelineRAG
-            rag = VisualGuidelineRAG()
-            guidelines = rag.retrieve(args.evolution, top_k=3)
-            if guidelines:
-                visual_guidelines = "\n".join([g.text for g in guidelines])
-                print(f"\nRetrieved {len(guidelines)} guidelines from RAG")
-        except Exception as e:
-            print(f"Warning: Could not load RAG: {e}")
-    
-    style_guidelines={
-        "background": "white background",
-        "color_palette": "white, pink, purple",
-        "style": "minimalism, line art, vector art, modern graphic design, abstract art, organic form",
-    }
-    # Generate prompts
-    evolutionary_prompts = vlm.generate_evolutionary_sequence(
+
+    # Generate evolution sequence
+    evolutionary_prompts = vlm.generate_evolution_sequence(
         image_path=args.initial_image,
-        evolution_description=args.evolution,
-        num_prompts=args.num_prompts,
-        visual_guidelines=visual_guidelines,
-        analysis_type=args.analysis_type,
-        prompts_type=args.prompts_type, 
-        style_guidelines=style_guidelines
+        evolution_template=args.evolution_template,
+        num_steps=args.num_prompts,
+        style_prefix=args.style_prefix
     )
-    
-    # Save prompts
-    prompts_file = output_dir / "prompts.json"
-    vlm.save_prompts(evolutionary_prompts, str(prompts_file))
-    vlm.display_prompts(evolutionary_prompts)
-    
+
+    vlm.save_prompts(evolutionary_prompts,
+                           str(output_dir / "prompts.json"))
+
+    print(f"\n✓ Prompts saved to: prompts.json")
+
+    # Display prompts
+    print("\nGenerated Prompts:")
+    print("-" * 70)
+    for p in evolutionary_prompts:
+        print(f"\nStep {p['step']}: (signal={p['signal']:.2f})")
+        print(f"  {p['prompt'][:150]}..." if len(p['prompt']) > 150 else f"  {p['prompt']}")
+        if p['change']:
+            print(f"  Change: {p['change']}")
+    print("-" * 70)
+
     # Exit if only generating prompts
     if args.save_prompts_only:
-        print(f"\n✓ Prompts saved to: {prompts_file}")
+        print(f"\n✓ Prompts saved to: prompts.json")
         print("Exiting (--save-prompts-only specified)")
         return
     
-    # free memory 
-    # del analyzer
-    # torch.cuda.empty_cache()
-    # gc.collect()
+    del vlm
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # Step 2: Generate keyframes with SDXL
     print("\n" + "="*70)
     print("STEP 2: Generating keyframes with SDXL")
     print("="*70)
-    
+
     sdxl = SDXLGenerator(
         model_id=ModelConfig.SDXL_MODEL_ID,
         device=ModelConfig.SDXL_DEVICE,
         load_txt_model=args.use_txt2img
     )
-    
+
     # Load LoRA if specified
     if args.lora:
         sdxl.load_lora(args.lora)
-    
+
     # Determine which prompts to use for keyframes
     num_keyframes = args.num_keyframes or len(evolutionary_prompts)
-    
+
     if num_keyframes < len(evolutionary_prompts):
         # Select subset of prompts
         step = len(evolutionary_prompts) / num_keyframes
@@ -179,7 +179,7 @@ def main():
         selected_prompts = [evolutionary_prompts[i]['prompt'] for i in selected_indices]
     else:
         selected_prompts = [p['prompt'] for p in evolutionary_prompts]
-    
+
     # Get initial image
     if args.use_txt2img:
         print("\nGenerating initial image with txt2img...")
@@ -197,13 +197,10 @@ def main():
         print(f"\nLoading initial image: {args.initial_image}")
         initial_image = Image.open(args.initial_image).convert('RGB')
         initial_image = initial_image.resize((args.width, args.height), Image.LANCZOS)
-    
+
     # Save initial image
     initial_image.save(frames_dir / "initial.png")
-    
-    # double each prompt to slow evolution
-    # selected_prompts = [p for p in selected_prompts for _ in (0, 1)]
-    
+
     # Generate keyframes
     keyframes = sdxl.generate_keyframes_from_prompts(
         initial_image=initial_image,
@@ -214,7 +211,7 @@ def main():
         seed=args.seed,
         save_dir=str(frames_dir)
     )
-    
+
     if args.interpolate:
 
         # Step 3: Interpolate frames
@@ -222,50 +219,39 @@ def main():
         print("STEP 3: Interpolating frames")
         print("="*70)
 
-        # Create appropriate interpolator based on user choice
-        if args.interpolator == 'latent_slerp':
-            print(f"Using latent SLERP interpolator")
-            interpolator = LatentSlerpInterpolator(
-                vae=sdxl.img2img_pipe.vae,
-                device=ModelConfig.SDXL_DEVICE
-            )
-        else:
-            print(f"Using {args.interpolator} interpolator")
-            interpolator = FrameInterpolator(interpolation_method=args.interpolator)
+        interpolator = FrameInterpolator(interpolation_method="linear")
 
         all_frames = interpolator.interpolate_between_keyframes(
             keyframes=keyframes,
             num_interpolations=args.interpolations,
             save_dir=str(frames_dir)
         )
-        if args.interpolator == 'latent_slerp':
-            interpolator.unload()
     else:
         all_frames = keyframes
-    
+
     # Step 4: Create signal mapping
     print("\n" + "="*70)
     print("STEP 4: Creating signal mapping")
     print("="*70)
-    
+
     mapper = SignalMapper(num_frames=len(all_frames))
-    
+
     # Save mapping
     mapping_file = output_dir / "signal_mapping.json"
     mapper.save_mapping(str(mapping_file))
-    
+
     print(f"Frames mapped to signals 0.0 to 1.0")
     print(f"Mapping resolution: {1.0 / (len(all_frames) - 1):.6f} per frame")
-    
+
     # Save metadata
     metadata = {
         'timestamp': timestamp,
         'initial_image': args.initial_image,
-        'evolution': args.evolution,
+        'evolution_template': args.evolution_template,
+        'style_prefix': args.style_prefix,
         'num_prompts': len(evolutionary_prompts),
         'num_keyframes': len(keyframes),
         'num_interpolations': args.interpolations,
-        'interpolator': args.interpolator if args.interpolate else None,
         'total_frames': len(all_frames),
         'parameters': {
             'strength': args.strength,
@@ -277,22 +263,22 @@ def main():
         },
         'lora_used': args.lora is not None,
         'lora_path': args.lora,
-        'rag_used': args.use_rag,
-        'txt2img_used': args.use_txt2img
+        'txt2img_used': args.use_txt2img,
+        'universal_evolution': True
     }
-    
+
     metadata_file = output_dir / "metadata.json"
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
-    
+
     print("\n" + "="*70)
-    print("✓ IMAGE GENERATION COMPLETE")
+    print("✓ UNIVERSAL EVOLUTION GENERATION COMPLETE")
     print("="*70)
     print(f"\nResults:")
     print(f"  Output directory: {output_dir}")
+    print(f"  Evolution template: {args.evolution_template}")
     print(f"  Keyframes: {len(keyframes)}")
     print(f"  Total frames: {len(all_frames)}")
-    print(f"  Prompts: {prompts_file}")
     print(f"  Mapping: {mapping_file}")
     print(f"  Metadata: {metadata_file}")
     print("\n" + "="*70)

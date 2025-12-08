@@ -22,12 +22,108 @@ class PromptGenerator:
         self.analyzer = ImageAnalyzer(model_id=model_id, device=device)
         print("✓ Prompt Generator initialized")
     
+    def expand_evolution_goal(self,
+                             evolution_goal: str,
+                             style_guidelines: Optional[Dict[str, str]] = None) -> str:
+        """
+        Expand evolution goal with detailed descriptions and style guidelines
+        
+        Args:
+            evolution_goal: Brief evolution goal (e.g., "a beautiful sunflower")
+            style_guidelines: Optional dict with style rules
+            
+        Returns:
+            Detailed expanded description
+        """
+        print(f"\n{'='*70}")
+        print("Expanding Evolution Goal with Style Guidelines")
+        print(f"{'='*70}")
+        print(f"Original goal: {evolution_goal}")
+        
+        # Default style guidelines
+        if style_guidelines is None:
+            style_guidelines = {
+                "background": "white background",
+                "composition": "centered, balanced composition",
+                "color_palette": "vibrant, harmonious colors",
+                "style": "clean, modern aesthetic",
+                "details": "high detail, professional quality"
+            }
+        
+        # Build style context
+        style_context = "\n".join([f"- {k}: {v}" for k, v in style_guidelines.items()])
+        
+        expansion_prompt = f"""You are an expert visual designer and art director.
+
+TASK: Expand and enrich this brief concept into a detailed, vivid visual description.
+
+BRIEF CONCEPT:
+"{evolution_goal}"
+
+STYLE GUIDELINES TO FOLLOW:
+{style_context}
+
+YOUR JOB:
+1. Elaborate on the concept with rich visual details
+2. Specify colors, textures, forms, and spatial arrangement
+3. Add atmospheric qualities (lighting, mood)
+4. Incorporate ALL the style guidelines naturally
+5. Make it specific enough for an AI image generator
+
+REQUIREMENTS:
+- Output 2-4 sentences maximum
+- Be concrete and visual (not abstract or poetic)
+- Include specific colors, shapes, and composition details
+- Naturally integrate the style guidelines
+- Make it sound like a complete SDXL prompt
+
+EXAMPLES:
+Input: "a beautiful sunflower"
+Output: "A large, vibrant sunflower with golden yellow petals radiating from a dark brown center, positioned centrally on a pure white background. The flower head fills 60% of the frame, with soft natural lighting highlighting the delicate petal textures and seed patterns. Clean, minimalist composition with high botanical detail and warm, inviting color palette."
+
+Input: "abstract flowing shapes"
+Output: "Smooth, organic purple shapes flowing diagonally across the composition, with soft gradients and translucent overlays creating depth. Centered on a clean white background with subtle shadows for dimensionality. Modern, minimalist aesthetic with fluid forms and harmonious color transitions from deep violet to soft lavender."
+
+Now expand this:
+"{evolution_goal}"
+
+Output ONLY the expanded description, no other text."""
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": expansion_prompt}
+                ]
+            }
+        ]
+        
+        # Ensure VLM is loaded
+        self.analyzer.move_to_gpu()
+        
+        response = self.analyzer._generate_response(messages)
+        
+        # Clean up response
+        expanded_description = response.strip()
+        
+        # Remove any quotes or preamble
+        if expanded_description.startswith('"') and expanded_description.endswith('"'):
+            expanded_description = expanded_description[1:-1]
+        
+        print(f"\nExpanded description:")
+        print(f"  {expanded_description}")
+        print(f"✓ Expansion complete ({len(expanded_description)} chars)")
+        
+        return expanded_description
+    
     def generate_evolutionary_sequence(self,
                                       image_path: str,
                                       evolution_description: str,
                                       num_prompts: int = 13,
                                       visual_guidelines: Optional[str] = None,
-                                      analysis_type: str = "brief") -> List[Dict]:
+                                      analysis_type: str = "brief",
+                                      prompts_type: str = 'basic',
+                                      style_guidelines: Optional[Dict[str, str]] = None) -> List[Dict]:
         """
         Generate evolutionary prompt sequence for reverse engineering approach
         
@@ -49,10 +145,17 @@ class PromptGenerator:
         analysis = self.analyzer.analyze_image(image_path, analysis_type=analysis_type)
         image_description = analysis['description']
         print(image_description)
-        
         print(f"Image analysis complete ({len(image_description)} chars)")
+
         
-        # Step 2: Generate evolutionary sequence
+        #Step 2: Expand evolution description
+        print("\nExpanding evolution description...")
+        evolution_description = self.expand_evolution_goal(
+            evolution_description,
+            style_guidelines=style_guidelines
+        )
+        
+        # Step 3: Generate evolutionary sequence
         print(f"\n[2/2] Generating {num_prompts} evolutionary prompts...")
         
         visual_section = ""
@@ -60,7 +163,7 @@ class PromptGenerator:
             visual_section = f"VISUAL TO FOLLOW:\n{visual_guidelines}"
 
 
-        evolution_prompt = f"""You are an expert at creating evolutionary image generation prompts.
+        evolution_prompt_basic = f"""You are an expert at creating evolutionary image generation prompts.
 
                                 IMAGE ANALYSIS (STATE A):
                                 {image_description}
@@ -144,6 +247,112 @@ class PromptGenerator:
                                 The "progress" field should go from 0.0 to 1.0 approximately linearly.
                                 Output ONLY the JSON array, with no extra text before or after.
                                 """
+                                
+        evolution_prompt_only = f"""You are an expert at creating evolutionary image generation prompts.
+
+                                    IMAGE ANALYSIS (for style reference only):
+                                    {image_description}
+
+                                    EVOLUTION GOAL (primary focus):
+                                    {evolution_description}
+
+                                    YOUR TASK:
+                                    Design a progressive sequence that BUILDS toward the evolution goal: "{evolution_description}"
+                                    The image analysis provides STYLE REFERENCE ONLY (colors, composition, aesthetic).
+
+                                    INTERPRETATION:
+                                    - This is NOT a morphing from image to goal
+                                    - This is a PROGRESSION that develops the evolution goal over {num_prompts} steps
+                                    - Extract STYLE ELEMENTS from the image (colors, composition, aesthetic approach)
+                                    - Apply those style elements to the evolution goal at each step
+                                    - Each step should show the evolution goal becoming more developed, detailed, and refined
+
+                                    STYLE EXTRACTION FROM IMAGE:
+                                    Analyze the image and extract:
+                                    1. Color palette and color treatment
+                                    2. Composition style (centered, balanced, minimal, etc.)
+                                    3. Background approach (solid color, gradient, textured, etc.)
+                                    4. Visual aesthetic (flat, 3D, illustrative, photorealistic, etc.)
+                                    5. Level of detail and rendering style
+
+                                    EVOLUTION STRATEGY:
+                                    - Step 1: Simple, minimal version of "{evolution_description}" using extracted style
+                                    - Steps 2-{num_prompts//3}: Gradually add main structural elements
+                                    - Steps {num_prompts//3+1}-{2*num_prompts//3}: Refine details and complexity
+                                    - Steps {2*num_prompts//3+1}-{num_prompts}: Polish and perfect the final vision
+
+                                    EVOLUTION BEHAVIOR (MANDATORY):
+                                    For each step i in 1..{num_prompts}:
+                                    - The subject is ALWAYS about "{evolution_description}"
+                                    - Apply the STYLE from the analyzed image (colors, composition, aesthetic)
+                                    - Each step adds MORE detail, complexity, or refinement to the evolution goal
+                                    - Do NOT reference the original image's subject matter
+                                    - Focus on BUILDING UP the evolution goal progressively
+
+                                    EXAMPLE (to clarify the approach):
+                                    Image analysis: "A purple circle on white background, minimalist flat design"
+                                    Evolution goal: "a beautiful sunflower"
+
+                                    Step 1: "A simple purple circular flower center on white background, minimalist flat design"
+                                    Step 2: "Purple circular flower center with first layer of petals beginning to form, centered on white, flat style"
+                                    Step 3: "Developing purple sunflower with partial petal ring, clean modern aesthetic, white background"
+                                    ...
+                                    Step {num_prompts}: "Fully detailed purple sunflower with complete petal formation, seeds visible in center, minimalist flat graphic design, centered on white background"
+
+                                    CRITICAL REQUIREMENTS:
+                                    1. Generate EXACTLY {num_prompts} steps (no more, no less).
+                                    2. Each "prompt" must be a complete, standalone SDXL prompt.
+                                    3. ALL steps should be about the evolution goal, NOT the original image subject.
+                                    4. Apply the STYLE from the image (colors, composition, aesthetic) to the evolution goal.
+                                    5. Changes should show DEVELOPMENT and REFINEMENT of the evolution goal.
+                                    6. Each step should be MORE complete than the previous one.
+                                    7. The final step should be the fully realized evolution goal in the extracted style.
+
+                                    STYLE CONSTRAINTS TO EXTRACT AND APPLY:
+                                    - Use the color palette from the analyzed image
+                                    - Use the composition approach (centered, balanced, etc.)
+                                    - Use the background style (white, solid color, etc.)
+                                    - Use the aesthetic approach (minimalist, detailed, etc.)
+
+                                    IMPORTANT:
+                                    - Keep prompts concise (max 100 tokens per step).
+                                    - The "change" field must describe what was added or refined in this step.
+                                    - Focus on PROGRESSIVE DEVELOPMENT, not morphing or transformation.
+                                    - The subject is the evolution goal from step 1 onwards.
+
+                                    FORMAT:
+                                    Output ONLY a JSON array with EXACTLY this structure:
+                                    [
+                                    {{
+                                        "step": 1,
+                                        "prompt": "simple initial version of evolution goal in extracted style",
+                                        "change": "initial minimal form",
+                                        "progress": "0.0"
+                                    }},
+                                    {{
+                                        "step": 2,
+                                        "prompt": "evolution goal with first additions in extracted style",
+                                        "change": "what structural element was added",
+                                        "progress": "{1.0/(num_prompts-1):.3f}"
+                                    }},
+                                    ...
+                                    {{
+                                        "step": {num_prompts-1},
+                                        "prompt": "nearly complete evolution goal in extracted style",
+                                        "change": "final refinements being added",
+                                        "progress": "{(num_prompts-2)/(num_prompts-1):.3f}"
+                                    }},
+                                    {{
+                                        "step": {num_prompts},
+                                        "prompt": "fully realized evolution goal matching extracted style perfectly",
+                                        "change": "final polished state achieved",
+                                        "progress": "1.0"
+                                    }}
+                                    ]
+
+                                    The "progress" field should go from 0.0 to 1.0 linearly.
+                                    Output ONLY the JSON array, with no extra text before or after.
+                                    """
 
         evolution_prompt_few_shot = f"""You are an expert at imagining how visual scenes can naturally evolve over time.
 
@@ -316,11 +525,23 @@ class PromptGenerator:
                                     FORMAT:
                                     Output ONLY a JSON array with EXACTLY this structure:
                                     """
+                                    
+        if prompts_type == 'basic':
+            evolution_prompt = evolution_prompt_basic
+        elif prompts_type == 'few_shot':
+            evolution_prompt = evolution_prompt_few_shot
+        elif prompts_type == 'matrix':
+            evolution_prompt = evolution_prompt_matrix
+        elif prompts_type == 'only':
+            evolution_prompt = evolution_prompt_only
+            
+            
+        print(f"Generating prompts with strategy {prompts_type}")
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": evolution_prompt_matrix}
+                    {"type": "text", "text": evolution_prompt}
                 ]
             }
         ]
