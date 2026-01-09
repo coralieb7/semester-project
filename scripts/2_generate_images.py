@@ -10,8 +10,8 @@ import argparse
 from PIL import Image
 from src.vlm.prompt_generator import PromptGenerator
 from src.sdxl.generator import SDXLGenerator
-from src.sdxl.interpolator import FrameInterpolator
 from src.sdxl.latent_slerp_interpolator import LatentSlerpInterpolator
+from src.sdxl.latent_interpolator import LatentInterpolator
 from src.sdxl.mapper import SignalMapper
 from config.model_config import ModelConfig
 from config.paths import Paths
@@ -20,6 +20,10 @@ import os
 import gc
 import torch
 from datetime import datetime
+import time
+from collections import defaultdict
+import numpy as np
+
 
 
 def main():
@@ -54,15 +58,15 @@ def main():
     # SDXL parameters
     parser.add_argument('--strength', type=float, default=0.45,
                        help='SDXL strength (0.0-1.0)')
-    parser.add_argument('--guidance', type=float, default=15.0,
+    parser.add_argument('--guidance', type=float, default=18.0,
                        help='Guidance scale')
     parser.add_argument('--steps', type=int, default=50,
                        help='Inference steps')
-    parser.add_argument('--width', type=int, default=1024,
+    parser.add_argument('--width', type=int, default=512,
                        help='Image width')
-    parser.add_argument('--height', type=int, default=1024,
+    parser.add_argument('--height', type=int, default=512,
                        help='Image height')
-    parser.add_argument('--seed', type=int, default=42,
+    parser.add_argument('--seed', type=int, default=None,
                        help='Random seed')
     
     # Options
@@ -87,6 +91,10 @@ def main():
     print("Image Generation Pipeline")
     print("="*70)
     
+    timings = defaultdict(list)
+    t_global_start = time.perf_counter()
+
+
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = os.path.splitext(os.path.basename(args.initial_image))[0]
@@ -104,6 +112,7 @@ def main():
     print("STEP 1: Generating evolutionary prompts with VLM")
     print("="*70)
     
+    t_vlm_start = time.perf_counter()
     vlm = PromptGenerator(
         model_id=ModelConfig.VLM_MODEL_ID,
         device=ModelConfig.VLM_DEVICE
@@ -143,6 +152,9 @@ def main():
     vlm.save_prompts(evolutionary_prompts, str(prompts_file))
     vlm.display_prompts(evolutionary_prompts)
     
+    t_vlm_end = time.perf_counter()
+    timings["vlm_time"].append(t_vlm_end - t_vlm_start)
+    
     # Exit if only generating prompts
     if args.save_prompts_only:
         print(f"\n✓ Prompts saved to: {prompts_file}")
@@ -153,7 +165,9 @@ def main():
     # del analyzer
     # torch.cuda.empty_cache()
     # gc.collect()
-
+    
+    
+    
     # Step 2: Generate keyframes with SDXL
     print("\n" + "="*70)
     print("STEP 2: Generating keyframes with SDXL")
@@ -204,7 +218,10 @@ def main():
     # double each prompt to slow evolution
     # selected_prompts = [p for p in selected_prompts for _ in (0, 1)]
     
-    # Generate keyframes
+    # Generate keyframes and time the operation
+    t0 = time.perf_counter()
+    torch.cuda.synchronize()
+    
     keyframes = sdxl.generate_keyframes_from_prompts(
         initial_image=initial_image,
         prompts=selected_prompts,
@@ -214,7 +231,15 @@ def main():
         seed=args.seed,
         save_dir=str(frames_dir)
     )
-    
+    torch.cuda.synchronize()
+    t1 = time.perf_counter()
+
+    total_keyframe_time = t1 - t0
+    mean_keyframe_time = total_keyframe_time / len(keyframes)
+
+    timings["keyframe_total_time"].append(total_keyframe_time)
+    timings["keyframe_mean_time"].append(mean_keyframe_time)
+
     if args.interpolate:
 
         # Step 3: Interpolate frames
@@ -223,23 +248,54 @@ def main():
         print("="*70)
 
         # Create appropriate interpolator based on user choice
-        if args.interpolator == 'latent_slerp':
-            print(f"Using latent SLERP interpolator")
+        if args.interpolator == "latent_slerp":
             interpolator = LatentSlerpInterpolator(
                 vae=sdxl.img2img_pipe.vae,
                 device=ModelConfig.SDXL_DEVICE
             )
         else:
-            print(f"Using {args.interpolator} interpolator")
-            interpolator = FrameInterpolator(interpolation_method=args.interpolator)
+            # latent=True makes linear/cosine comparable to SLERP
+            interpolator = LatentInterpolator(
+                interpolation_method=args.interpolator,  # "linear" or "cosine"
+                latent=True,
+                vae=sdxl.img2img_pipe.vae,
+                device=ModelConfig.SDXL_DEVICE,
+            )
 
+        # time interpolation
+        t0 = time.perf_counter()
+
+        # all_frames = interpolator.interpolate_between_keyframes(
+        #     keyframes=keyframes,
+        #     num_interpolations=args.interpolations,
+        #     save_dir=str(frames_dir)
+        # )
         all_frames = interpolator.interpolate_between_keyframes(
             keyframes=keyframes,
             num_interpolations=args.interpolations,
             save_dir=str(frames_dir)
         )
-        if args.interpolator == 'latent_slerp':
-            interpolator.unload()
+        interp_norm_stats = interpolator.get_norm_stats()
+        interp_decode_stats = interpolator.get_decode_stats()
+        interp_encode_stats = interpolator.get_encode_stats()
+        interpolator.unload()
+
+        t1 = time.perf_counter()
+        
+    
+
+        num_interp_frames = len(all_frames) - len(keyframes)
+        interp_time_total = t1 - t0
+        interp_time_per_frame = interp_time_total / max(1, num_interp_frames)
+
+        timings["interp_total_time"].append(interp_time_total)
+        timings["interp_time_per_frame"].append(interp_time_per_frame)
+
+        # if args.interpolator == 'latent_slerp':
+        #     interpolator.unload()
+        #     decode_stats = interpolator.get_decode_stats()
+        #     timings["vae_decode_mean"].append(decode_stats["mean_decode_time"])
+            
     else:
         all_frames = keyframes
     
@@ -256,6 +312,10 @@ def main():
     
     print(f"Frames mapped to signals 0.0 to 1.0")
     print(f"Mapping resolution: {1.0 / (len(all_frames) - 1):.6f} per frame")
+    
+    # save timings 
+    t_global_end = time.perf_counter()
+    timings["full_offline_time"].append(t_global_end - t_global_start)
     
     # Save metadata
     metadata = {
@@ -280,11 +340,24 @@ def main():
         'rag_used': args.use_rag,
         'txt2img_used': args.use_txt2img
     }
+    metadata["interpolation_stats"] = {
+        "norm": interp_norm_stats,
+        "decode": interp_decode_stats,
+        "encode": interp_encode_stats,
+    }
     
     metadata_file = output_dir / "metadata.json"
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
     
+    timing_file = output_dir / "timings.json"
+    with open(timing_file, "w") as f:
+        json.dump({k: float(np.mean(v)) for k, v in timings.items()}, f, indent=2)
+
+    print(f"Timing metrics saved to: {timing_file}")
+
+    
+
     print("\n" + "="*70)
     print("✓ IMAGE GENERATION COMPLETE")
     print("="*70)

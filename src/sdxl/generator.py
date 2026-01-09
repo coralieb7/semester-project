@@ -187,7 +187,7 @@ class SDXLGenerator:
             
             generator = None
             if seed is not None:
-                generator = torch.Generator(device=self.device).manual_seed(seed + i)
+                generator = torch.Generator(device=self.device).manual_seed(seed+i)
             
             # Generate next image
             current_image = self.img2img_pipe(
